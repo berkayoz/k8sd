@@ -1,18 +1,23 @@
 package k8s
 
 import (
-	"syscall"
+	"time"
 
 	cmdutil "github.com/canonical/k8sd/cmd/util"
+	"github.com/canonical/k8sd/pkg/snap/util/inspect"
 	"github.com/spf13/cobra"
 )
 
 func newInspectCmd(env cmdutil.ExecutionEnvironment) *cobra.Command {
-	// We're copying the help string from the "inspect.sh" script with
-	// only minor adjustments. At the same time, we'll avoid parsing the
-	// same arguments twice.
-	return &cobra.Command{
-		Use:   "inspect <output-file>",
+	var opts struct {
+		allNamespaces     bool
+		numSnapLogEntries int
+		timeout           time.Duration
+		coreDumpDir       string
+	}
+
+	cmd := &cobra.Command{
+		Use:   "inspect [output-file]",
 		Short: "Generate inspection report",
 		Long: `Generate an inspection report tarball containing diagnostics and relevant information from a Kubernetes node.
 
@@ -32,20 +37,31 @@ Arguments:
                           Default: 180s.
   --core-dump-dir         (Optional) Core dump location. Default: /var/crash.
 `,
-		DisableFlagParsing: true,
-		PreRun:             chainPreRunHooks(hookRequireRoot(env)),
+		Args:   cobra.MaximumNArgs(1),
+		PreRun: chainPreRunHooks(hookRequireRoot(env)),
 		Run: func(cmd *cobra.Command, args []string) {
-			inspectScriptPath := env.Snap.K8sInspectScriptPath()
+			inspectOpts := inspect.InspectOpts{
+				AllNamespaces:     opts.allNamespaces,
+				NumSnapLogEntries: opts.numSnapLogEntries,
+				Timeout:           opts.timeout,
+				CoreDumpDir:       opts.coreDumpDir,
+			}
 
-			command := append([]string{inspectScriptPath}, args...)
-			environ := cmdutil.EnvironWithDefaults(
-				env.Environ,
-			)
-			if err := syscall.Exec(inspectScriptPath, command, environ); err != nil {
-				cmd.PrintErrf("Failed to run %s.\n\nError: %v\n", command, err)
+			if len(args) > 0 {
+				inspectOpts.OutputFile = args[0]
+			}
+
+			if err := inspect.Inspect(cmd.Context(), env.Snap, cmd.OutOrStdout(), inspectOpts); err != nil {
+				cmd.PrintErrf("Error: Failed to generate inspection report.\n\nError: %v\n", err)
 				env.Exit(1)
-				return
 			}
 		},
 	}
+
+	cmd.Flags().BoolVar(&opts.allNamespaces, "all-namespaces", false, "acquire detailed debugging information, including logs from all Kubernetes namespaces")
+	cmd.Flags().IntVar(&opts.numSnapLogEntries, "num-snap-log-entries", 100000, "the maximum number of log entries to collect from snap services")
+	cmd.Flags().DurationVar(&opts.timeout, "timeout", 180*time.Second, "the maximum time to wait for a command")
+	cmd.Flags().StringVar(&opts.coreDumpDir, "core-dump-dir", "/var/crash", "core dump location")
+
+	return cmd
 }

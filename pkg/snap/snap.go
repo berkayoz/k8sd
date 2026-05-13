@@ -366,10 +366,6 @@ func (s *snap) K8sBinDir() string {
 	return filepath.Join(s.snapDir, "bin")
 }
 
-func (s *snap) K8sInspectScriptPath() string {
-	return filepath.Join(s.K8sScriptsDir(), "inspect.sh")
-}
-
 func (s *snap) restClientGetter(path string, namespace string) genericclioptions.RESTClientGetter {
 	flags := &genericclioptions.ConfigFlags{
 		KubeConfig: utils.Pointer(path),
