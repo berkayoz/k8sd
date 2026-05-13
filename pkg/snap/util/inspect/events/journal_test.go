@@ -74,6 +74,35 @@ func TestCollectJournalsHandlesNonUTCOffset(t *testing.T) {
 	g.Expect(out[0].Source).To(Equal("kube-apiserver"))
 }
 
+// TestCollectJournalsShortIsoPrecise covers the `journalctl -o short-iso-precise`
+// output that inspect actually requests: each line carries a microsecond
+// fraction, so log bursts within a single wall-clock second still produce
+// distinct timestamps in events.json.
+func TestCollectJournalsShortIsoPrecise(t *testing.T) {
+	g := NewWithT(t)
+
+	tmp := t.TempDir()
+	svcDir := filepath.Join(tmp, "k8s.kubelet")
+	g.Expect(os.MkdirAll(svcDir, 0o755)).To(Succeed())
+
+	body := `2024-01-15T10:00:00.000123+0000 host snap.k8s.kubelet[1234]: first
+2024-01-15T10:00:00.000456+0000 host snap.k8s.kubelet[1234]: second
+2024-01-15T10:00:00.999999+0000 host snap.k8s.kubelet[1234]: third
+`
+	g.Expect(os.WriteFile(filepath.Join(svcDir, "journal.log"), []byte(body), 0o644)).To(Succeed())
+
+	out := collectJournals(tmp)
+	g.Expect(out).To(HaveLen(3))
+
+	// All three lines fall in the same wall-clock second; with microsecond
+	// precision they must remain distinct.
+	g.Expect(out[0].Timestamp).ToNot(Equal(out[1].Timestamp))
+	g.Expect(out[1].Timestamp).ToNot(Equal(out[2].Timestamp))
+	g.Expect(out[0].Timestamp).To(Equal("2024-01-15T10:00:00.000123Z"))
+	g.Expect(out[1].Timestamp).To(Equal("2024-01-15T10:00:00.000456Z"))
+	g.Expect(out[2].Timestamp).To(Equal("2024-01-15T10:00:00.999999Z"))
+}
+
 func TestCollectJournalsIgnoresNonServiceDirs(t *testing.T) {
 	g := NewWithT(t)
 

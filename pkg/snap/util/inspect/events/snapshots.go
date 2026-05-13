@@ -28,6 +28,12 @@ var snapshotSpecs = []snapshotSpec{
 // file is not parsed line-by-line because these snapshots are point-in-time
 // summaries; the line count and the first non-empty content line are enough
 // signal for downstream RCA.
+//
+// All six snapshot commands run within milliseconds of each other inside
+// collectSystemInfo, so their file mtimes often collide at second-level
+// precision. We add a deterministic per-spec microsecond offset on top of the
+// mtime to guarantee distinct, sortable timestamps in events.json regardless
+// of filesystem mtime resolution.
 func collectSnapshots(dumpDir, nodeRef string) []Event {
 	sysDir := filepath.Join(dumpDir, "sys")
 	if _, err := os.Stat(sysDir); err != nil {
@@ -35,9 +41,9 @@ func collectSnapshots(dumpDir, nodeRef string) []Event {
 	}
 
 	var out []Event
-	for _, spec := range snapshotSpecs {
+	for i, spec := range snapshotSpecs {
 		path := filepath.Join(sysDir, spec.file)
-		ev, ok := snapshotEvent(path, spec, nodeRef)
+		ev, ok := snapshotEvent(path, spec, nodeRef, i)
 		if !ok {
 			continue
 		}
@@ -46,7 +52,7 @@ func collectSnapshots(dumpDir, nodeRef string) []Event {
 	return out
 }
 
-func snapshotEvent(path string, spec snapshotSpec, nodeRef string) (Event, bool) {
+func snapshotEvent(path string, spec snapshotSpec, nodeRef string, idx int) (Event, bool) {
 	info, err := os.Stat(path)
 	if err != nil {
 		return Event{}, false
@@ -58,8 +64,10 @@ func snapshotEvent(path string, spec snapshotSpec, nodeRef string) (Event, bool)
 		msg += "; header=" + firstLine
 	}
 
+	ts := info.ModTime().UTC().Add(time.Duration(idx) * time.Microsecond)
+
 	return Event{
-		Timestamp:  info.ModTime().UTC().Format(time.RFC3339),
+		Timestamp:  ts.Format(time.RFC3339Nano),
 		Severity:   SeverityInfo,
 		Message:    msg,
 		Source:     "node",

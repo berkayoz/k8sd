@@ -9,17 +9,25 @@ import (
 	"time"
 )
 
-// journalLineRe matches `journalctl --utc -o short-iso` output:
+// journalLineRe matches `journalctl --utc -o short-iso[-precise]` output:
 //
-//	2024-01-15T10:00:00+0000 hostname snap.k8s.kubelet[1234]: <message>
-var journalLineRe = regexp.MustCompile(`^(?P<ts>\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}[+-]\d{4})\s+\S+\s+\S+:\s+(?P<msg>.*)$`)
+//	2024-01-15T10:00:00+0000           hostname svc[1234]: <message>  (short-iso)
+//	2024-01-15T10:00:00.123456+0000    hostname svc[1234]: <message>  (short-iso-precise)
+//
+// The fractional-seconds segment is optional so the parser keeps working if
+// the inspect command is ever reverted to short-iso, or if a journal mixes
+// formats.
+var journalLineRe = regexp.MustCompile(`^(?P<ts>\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?[+-]\d{4})\s+\S+\s+\S+:\s+(?P<msg>.*)$`)
 
 // klogPrefixRe matches a klog-style severity prefix at the start of a message:
 //
 //	I0115 10:00:00.123456    1234 kubelet.go:123] <text>
 var klogPrefixRe = regexp.MustCompile(`^([IWEF])\d{4}\s+\d{2}:\d{2}:\d{2}\.\d+\s+\d+\s+\S+:\d+\]\s*`)
 
-const journalTimeLayout = "2006-01-02T15:04:05-0700"
+const (
+	journalTimeLayout        = "2006-01-02T15:04:05-0700"
+	journalTimeLayoutPrecise = "2006-01-02T15:04:05.999999-0700"
+)
 
 // collectJournals scans dumpDir for <service>/journal.log files written by
 // collectServiceDiagnostics. Service directory names start with "k8s." which
@@ -82,11 +90,13 @@ func parseJournalFile(path, service string) []Event {
 }
 
 func parseJournalTimestamp(raw string) string {
-	t, err := time.Parse(journalTimeLayout, raw)
-	if err != nil {
-		return raw
+	if t, err := time.Parse(journalTimeLayoutPrecise, raw); err == nil {
+		return t.UTC().Format(time.RFC3339Nano)
 	}
-	return t.UTC().Format(time.RFC3339)
+	if t, err := time.Parse(journalTimeLayout, raw); err == nil {
+		return t.UTC().Format(time.RFC3339)
+	}
+	return raw
 }
 
 func severityFromMessage(msg string) string {

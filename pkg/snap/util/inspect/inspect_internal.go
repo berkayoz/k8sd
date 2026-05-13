@@ -201,9 +201,10 @@ func (c *collector) collectServiceDiagnostics(ctx context.Context, service strin
 	}
 
 	journalFile := filepath.Join(serviceDir, "journal.log")
-	// --utc + short-iso gives each line a full ISO-8601 timestamp, so the
-	// events normalizer can extract absolute time without guessing the year.
-	c.runWithTimeout(ctx, []string{"journalctl", "--utc", "-o", "short-iso", "-n", fmt.Sprintf("%d", c.opts.NumSnapLogEntries), "-u", "snap." + service}, func(ec *exec.Cmd) {
+	// --utc + short-iso-precise gives each line a microsecond-precision ISO-8601
+	// timestamp. short-iso (second precision) collapses bursty log lines onto
+	// the same timestamp in events.json, which breaks downstream ordering.
+	c.runWithTimeout(ctx, []string{"journalctl", "--utc", "-o", "short-iso-precise", "-n", fmt.Sprintf("%d", c.opts.NumSnapLogEntries), "-u", "snap." + service}, func(ec *exec.Cmd) {
 		f, err := os.Create(journalFile)
 		if err != nil {
 			return
