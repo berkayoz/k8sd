@@ -142,6 +142,38 @@ func TestSnap(t *testing.T) {
 		})
 	})
 
+	t.Run("Strict uses snapctl", func(t *testing.T) {
+		g := NewWithT(t)
+		tmpDir, err := os.MkdirTemp("", "test-snap-k8s-strict")
+		g.Expect(err).To(Not(HaveOccurred()))
+		defer os.RemoveAll(tmpDir)
+
+		g.Expect(os.MkdirAll(filepath.Join(tmpDir, "meta"), 0o755)).To(Succeed())
+		g.Expect(os.WriteFile(
+			filepath.Join(tmpDir, "meta", "snap.yaml"),
+			[]byte("confinement: strict\n"),
+			0o644,
+		)).To(Succeed())
+
+		mockRunner := &mock.Runner{}
+		s := snap.NewSnap(snap.SnapOpts{
+			SnapDir:       tmpDir,
+			SnapCommonDir: tmpDir,
+			RunCommand:    mockRunner.Run,
+		})
+
+		g.Expect(s.StartServices(context.Background(), []string{"etcd"})).To(Succeed())
+		g.Expect(mockRunner.CalledWithCommand).To(ConsistOf("snapctl start k8s.etcd --enable"))
+
+		mockRunner.CalledWithCommand = []string{}
+		g.Expect(s.StopServices(context.Background(), []string{"etcd"})).To(Succeed())
+		g.Expect(mockRunner.CalledWithCommand).To(ConsistOf("snapctl stop k8s.etcd --disable"))
+
+		mockRunner.CalledWithCommand = []string{}
+		g.Expect(s.RestartServices(context.Background(), []string{"etcd"})).To(Succeed())
+		g.Expect(mockRunner.CalledWithCommand).To(ConsistOf("snapctl restart k8s.etcd"))
+	})
+
 	t.Run("PreInitChecks", func(t *testing.T) {
 		g := NewWithT(t)
 		// Replace the ContainerdSocketDir to avoid checking against a real containerd.sock that may be running.

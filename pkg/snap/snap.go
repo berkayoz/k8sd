@@ -75,8 +75,14 @@ func NewSnap(opts SnapOpts) *snap {
 }
 
 // buildServiceCommand creates a snap command for managing services.
+// Under strict confinement the snap cannot exec /usr/bin/snap from inside the
+// sandbox, so use snapctl (always available through the snapd socket) instead.
 func (s *snap) buildServiceCommand(action string, names []string, extraSnapArgs ...string) []string {
-	cmd := []string{"snap", action}
+	tool := "snap"
+	if s.Strict() {
+		tool = "snapctl"
+	}
+	cmd := []string{tool, action}
 	for _, name := range names {
 		cmd = append(cmd, serviceName(name))
 	}
