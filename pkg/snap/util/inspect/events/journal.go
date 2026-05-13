@@ -9,15 +9,17 @@ import (
 	"time"
 )
 
-// journalLineRe matches the standard journalctl prefix:
+// journalLineRe matches `journalctl --utc -o short-iso` output:
 //
-//	Jan 15 10:00:00 hostname snap.k8s.kubelet[1234]: <message>
-var journalLineRe = regexp.MustCompile(`^(?P<ts>[A-Z][a-z]{2}\s+\d{1,2}\s+\d{2}:\d{2}:\d{2})\s+\S+\s+\S+:\s+(?P<msg>.*)$`)
+//	2024-01-15T10:00:00+0000 hostname snap.k8s.kubelet[1234]: <message>
+var journalLineRe = regexp.MustCompile(`^(?P<ts>\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}[+-]\d{4})\s+\S+\s+\S+:\s+(?P<msg>.*)$`)
 
 // klogPrefixRe matches a klog-style severity prefix at the start of a message:
 //
 //	I0115 10:00:00.123456    1234 kubelet.go:123] <text>
 var klogPrefixRe = regexp.MustCompile(`^([IWEF])\d{4}\s+\d{2}:\d{2}:\d{2}\.\d+\s+\d+\s+\S+:\d+\]\s*`)
+
+const journalTimeLayout = "2006-01-02T15:04:05-0700"
 
 // collectJournals scans dumpDir for <service>/journal.log files written by
 // collectServiceDiagnostics. Service directory names start with "k8s." which
@@ -50,7 +52,6 @@ func parseJournalFile(path, service string) []Event {
 	}
 	defer f.Close()
 
-	year := time.Now().Year()
 	resourceID := "service/" + service
 
 	var out []Event
@@ -67,7 +68,7 @@ func parseJournalFile(path, service string) []Event {
 		severity := severityFromMessage(msg)
 		msg = klogPrefixRe.ReplaceAllString(msg, "")
 
-		ts := parseJournalTimestamp(tsRaw, year)
+		ts := parseJournalTimestamp(tsRaw)
 		out = append(out, Event{
 			Timestamp:  ts,
 			Severity:   severity,
@@ -80,17 +81,12 @@ func parseJournalFile(path, service string) []Event {
 	return out
 }
 
-func parseJournalTimestamp(raw string, year int) string {
-	// "Jan 15 10:00:00" — assume current year, UTC. journalctl prints in local
-	// time by default but the snap inspection environment is conventionally UTC;
-	// we don't have timezone info in the prefix, so treating as UTC is the
-	// safest no-info-loss choice.
-	t, err := time.Parse("Jan 2 15:04:05", raw)
+func parseJournalTimestamp(raw string) string {
+	t, err := time.Parse(journalTimeLayout, raw)
 	if err != nil {
 		return raw
 	}
-	t = time.Date(year, t.Month(), t.Day(), t.Hour(), t.Minute(), t.Second(), 0, time.UTC)
-	return t.Format(time.RFC3339)
+	return t.UTC().Format(time.RFC3339)
 }
 
 func severityFromMessage(msg string) string {
