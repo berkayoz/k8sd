@@ -245,10 +245,16 @@ func (s *snap) SystemMinConfig() map[string]string {
 }
 
 func (s *snap) CNIConfDir() string {
+	if s.Strict() {
+		return filepath.Join(s.snapCommonDir, "etc", "cni", "net.d")
+	}
 	return "/etc/cni/net.d"
 }
 
 func (s *snap) CNIBinDir() string {
+	if s.Strict() {
+		return filepath.Join(s.snapCommonDir, "opt", "cni", "bin")
+	}
 	return "/opt/cni/bin"
 }
 
