@@ -11,13 +11,19 @@ import (
 
 // dmesgIsoLineRe matches the format produced by `dmesg --time-format=iso`:
 //
-//	YYYY-MM-DDTHH:MM:SS,uuuuuu±HHMM message
+//	YYYY-MM-DDTHH:MM:SS[,.]uuuuuu±HH[:]MM message
 //
-// The microsecond separator is a comma (locale-dependent), and the timezone is
-// the standard ±HHMM offset.
-var dmesgIsoLineRe = regexp.MustCompile(`^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}),\d+([+-]\d{4})\s+(.*)$`)
+// The fractional-seconds separator is a comma on most systems but is a period
+// in some locales. The timezone offset is normally ±HHMM, but newer util-linux
+// builds (and some distros) emit ±HH:MM — both must parse, otherwise every line
+// falls back to the file mtime and all kernel events collapse onto a single
+// timestamp in events.json.
+var dmesgIsoLineRe = regexp.MustCompile(`^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}[,.]\d+[+-]\d{2}:?\d{2})\s+(.*)$`)
 
-const dmesgTimeLayout = "2006-01-02T15:04:05-0700"
+const (
+	dmesgTimeLayout      = "2006-01-02T15:04:05,999999-0700"
+	dmesgTimeLayoutColon = "2006-01-02T15:04:05,999999Z07:00"
+)
 
 func collectDmesg(dumpDir, nodeRef string) []Event {
 	path := filepath.Join(dumpDir, "sys", "dmesg")
@@ -64,11 +70,15 @@ func parseDmesgLine(line, fallback string) (string, string) {
 	if m == nil {
 		return fallback, line
 	}
-	t, err := time.Parse(dmesgTimeLayout, m[1]+m[2])
-	if err != nil {
-		return fallback, strings.TrimSpace(m[3])
+	raw := strings.Replace(m[1], ".", ",", 1)
+	msg := strings.TrimSpace(m[2])
+	if t, err := time.Parse(dmesgTimeLayoutColon, raw); err == nil {
+		return t.UTC().Format(time.RFC3339Nano), msg
 	}
-	return t.UTC().Format(time.RFC3339), strings.TrimSpace(m[3])
+	if t, err := time.Parse(dmesgTimeLayout, raw); err == nil {
+		return t.UTC().Format(time.RFC3339Nano), msg
+	}
+	return fallback, msg
 }
 
 func dmesgSeverity(msg string) string {

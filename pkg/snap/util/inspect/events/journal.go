@@ -13,11 +13,12 @@ import (
 //
 //	2024-01-15T10:00:00+0000           hostname svc[1234]: <message>  (short-iso)
 //	2024-01-15T10:00:00.123456+0000    hostname svc[1234]: <message>  (short-iso-precise)
+//	2024-01-15T10:00:00.123456+00:00   hostname svc[1234]: <message>  (newer systemd)
 //
-// The fractional-seconds segment is optional so the parser keeps working if
-// the inspect command is ever reverted to short-iso, or if a journal mixes
-// formats.
-var journalLineRe = regexp.MustCompile(`^(?P<ts>\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?[+-]\d{4})\s+\S+\s+\S+:\s+(?P<msg>.*)$`)
+// Both ±HHMM and ±HH:MM offsets are accepted because newer systemd builds
+// emit the colon-form; the fractional-seconds segment is optional so the
+// parser keeps working with plain short-iso too.
+var journalLineRe = regexp.MustCompile(`^(?P<ts>\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?[+-]\d{2}:?\d{2})\s+\S+\s+\S+:\s+(?P<msg>.*)$`)
 
 // klogPrefixRe matches a klog-style severity prefix at the start of a message:
 //
@@ -25,8 +26,10 @@ var journalLineRe = regexp.MustCompile(`^(?P<ts>\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d
 var klogPrefixRe = regexp.MustCompile(`^([IWEF])\d{4}\s+\d{2}:\d{2}:\d{2}\.\d+\s+\d+\s+\S+:\d+\]\s*`)
 
 const (
-	journalTimeLayout        = "2006-01-02T15:04:05-0700"
-	journalTimeLayoutPrecise = "2006-01-02T15:04:05.999999-0700"
+	journalTimeLayout             = "2006-01-02T15:04:05-0700"
+	journalTimeLayoutColon        = "2006-01-02T15:04:05Z07:00"
+	journalTimeLayoutPrecise      = "2006-01-02T15:04:05.999999-0700"
+	journalTimeLayoutPreciseColon = "2006-01-02T15:04:05.999999Z07:00"
 )
 
 // collectJournals scans dumpDir for <service>/journal.log files written by
@@ -90,11 +93,15 @@ func parseJournalFile(path, service string) []Event {
 }
 
 func parseJournalTimestamp(raw string) string {
-	if t, err := time.Parse(journalTimeLayoutPrecise, raw); err == nil {
-		return t.UTC().Format(time.RFC3339Nano)
-	}
-	if t, err := time.Parse(journalTimeLayout, raw); err == nil {
-		return t.UTC().Format(time.RFC3339)
+	for _, layout := range []string{
+		journalTimeLayoutPreciseColon,
+		journalTimeLayoutPrecise,
+		journalTimeLayoutColon,
+		journalTimeLayout,
+	} {
+		if t, err := time.Parse(layout, raw); err == nil {
+			return t.UTC().Format(time.RFC3339Nano)
+		}
 	}
 	return raw
 }

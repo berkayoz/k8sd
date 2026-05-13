@@ -32,21 +32,33 @@ no timestamp on this line still emitted as fallback
 		g.Expect(e.Timestamp).ToNot(BeEmpty())
 	}
 
-	g.Expect(out[0].Timestamp).To(Equal("2024-01-15T10:00:00Z"))
+	g.Expect(out[0].Timestamp).To(Equal("2024-01-15T10:00:00.000001Z"))
 	g.Expect(out[0].Severity).To(Equal(SeverityWarning))
 	g.Expect(out[0].Message).To(ContainSubstring("USB device"))
 
-	g.Expect(out[1].Timestamp).To(Equal("2024-01-15T10:01:00Z"))
+	g.Expect(out[1].Timestamp).To(Equal("2024-01-15T10:01:00.000002Z"))
 	g.Expect(out[1].Severity).To(Equal(SeverityError))
 	g.Expect(out[1].Message).To(ContainSubstring("Out of memory"))
 
-	g.Expect(out[2].Timestamp).To(Equal("2024-01-15T10:02:00Z"))
+	g.Expect(out[2].Timestamp).To(Equal("2024-01-15T10:02:00.000003Z"))
 	g.Expect(out[2].Severity).To(Equal(SeverityError))
 
 	// Line with no parseable timestamp falls back to file mtime; events from
 	// other lines must have their own distinct, line-specific timestamps.
 	g.Expect(out[0].Timestamp).ToNot(Equal(out[1].Timestamp))
 	g.Expect(out[1].Timestamp).ToNot(Equal(out[2].Timestamp))
+}
+
+// TestParseDmesgLineHandlesColonTimezone pins the actual bug the user hit:
+// modern dmesg builds emit `+HH:MM` (with colon) instead of `+HHMM`. The old
+// regex skipped these lines entirely, so every kernel event fell back to the
+// dmesg file mtime and they all shared one timestamp in events.json.
+func TestParseDmesgLineHandlesColonTimezone(t *testing.T) {
+	g := NewWithT(t)
+
+	ts, msg := parseDmesgLine("2026-05-13T12:32:12,179250+00:00 systemd[1]: Queued start job for default target", "fallback-mtime")
+	g.Expect(ts).To(Equal("2026-05-13T12:32:12.17925Z"))
+	g.Expect(msg).To(Equal("systemd[1]: Queued start job for default target"))
 }
 
 func TestCollectDmesgMissing(t *testing.T) {
@@ -57,6 +69,8 @@ func TestCollectDmesgMissing(t *testing.T) {
 func TestParseDmesgLineHandlesTimezone(t *testing.T) {
 	g := NewWithT(t)
 
+	// Zero microseconds: RFC3339Nano suppresses the fractional component, so
+	// this comes out identical to plain RFC3339.
 	ts, msg := parseDmesgLine("2024-01-15T12:00:00,000000+0200 something", "fallback")
 	g.Expect(ts).To(Equal("2024-01-15T10:00:00Z"))
 	g.Expect(msg).To(Equal("something"))
