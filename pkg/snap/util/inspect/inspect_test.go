@@ -4,6 +4,7 @@ import (
 	"archive/tar"
 	"compress/gzip"
 	"context"
+	"encoding/json"
 	"io"
 	"os"
 	"path/filepath"
@@ -15,6 +16,7 @@ import (
 	k8sdmock "github.com/canonical/k8sd/pkg/client/k8sd/mock"
 	"github.com/canonical/k8sd/pkg/snap/mock"
 	"github.com/canonical/k8sd/pkg/snap/util/inspect"
+	"github.com/canonical/k8sd/pkg/snap/util/inspect/events"
 	. "github.com/onsi/gomega"
 )
 
@@ -195,6 +197,72 @@ func TestInspectCoreDumps(t *testing.T) {
 
 	output := stdout.String()
 	g.Expect(output).To(ContainSubstring("Collecting core dumps"))
+}
+
+func readTarballFile(t *testing.T, tarballPath, target string) ([]byte, bool) {
+	g := NewWithT(t)
+
+	f, err := os.Open(tarballPath)
+	g.Expect(err).ToNot(HaveOccurred())
+	defer f.Close()
+
+	gzReader, err := gzip.NewReader(f)
+	g.Expect(err).ToNot(HaveOccurred())
+	defer gzReader.Close()
+
+	tarReader := tar.NewReader(gzReader)
+	for {
+		header, err := tarReader.Next()
+		if err == io.EOF {
+			break
+		}
+		g.Expect(err).ToNot(HaveOccurred())
+		if strings.HasSuffix(header.Name, "/"+target) || header.Name == target {
+			data, err := io.ReadAll(tarReader)
+			g.Expect(err).ToNot(HaveOccurred())
+			return data, true
+		}
+	}
+	return nil, false
+}
+
+func TestInspectEmitsEventsJSON(t *testing.T) {
+	g := NewWithT(t)
+
+	tmpDir := t.TempDir()
+	oldCwd, _ := os.Getwd()
+	os.Chdir(tmpDir)
+	defer os.Chdir(oldCwd)
+
+	snapMock := newSnapMock(tmpDir, apiv2.ClusterRoleControlPlane, true)
+	mkdirs(snapMock)
+
+	outputFile := filepath.Join(tmpDir, "events-report.tar.gz")
+
+	opts := inspect.InspectOpts{
+		OutputFile:        outputFile,
+		NumSnapLogEntries: 100,
+		Timeout:           5 * time.Second,
+		CoreDumpDir:       filepath.Join(tmpDir, "coredumps"),
+	}
+
+	err := inspect.Inspect(context.Background(), snapMock, io.Discard, opts)
+	g.Expect(err).ToNot(HaveOccurred())
+
+	data, ok := readTarballFile(t, outputFile, "events.json")
+	g.Expect(ok).To(BeTrue(), "events.json missing from tarball")
+
+	var evs []events.Event
+	g.Expect(json.Unmarshal(data, &evs)).To(Succeed())
+
+	validSeverity := map[string]bool{events.SeverityInfo: true, events.SeverityWarning: true, events.SeverityError: true}
+	validType := map[string]bool{events.TypeLog: true, events.TypeMetric: true, events.TypeSystem: true, events.TypeSnapshot: true}
+	for _, e := range evs {
+		g.Expect(validSeverity).To(HaveKey(e.Severity), "unexpected severity %q in %+v", e.Severity, e)
+		g.Expect(validType).To(HaveKey(e.EventType), "unexpected event_type %q in %+v", e.EventType, e)
+		g.Expect(e.Timestamp).ToNot(BeEmpty())
+		g.Expect(e.ResourceID).ToNot(BeEmpty())
+	}
 }
 
 func TestScanForCertificates(t *testing.T) {

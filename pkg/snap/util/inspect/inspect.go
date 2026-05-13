@@ -125,6 +125,11 @@ func Inspect(ctx context.Context, s snap.Snap, stdout io.Writer, opts InspectOpt
 		fmt.Fprintf(stdout, "\033[31m WARNING: \033[0m Please remove the private key or certificate from the report before sharing.\n")
 	}
 
+	fmt.Fprintln(stdout, "Normalizing diagnostics into events.json")
+	if err := c.writeStructuredEvents(); err != nil {
+		c.logWarning(fmt.Sprintf("failed to write events.json: %v", err))
+	}
+
 	fmt.Fprintln(stdout, "Building the report tarball")
 	outputFile := opts.OutputFile
 	if outputFile == "" {
