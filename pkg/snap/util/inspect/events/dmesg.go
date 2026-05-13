@@ -9,12 +9,15 @@ import (
 	"time"
 )
 
-// dmesgPrefixRe strips the leading "[...]" timestamp prefix that `dmesg -H`
-// produces. Examples:
+// dmesgIsoLineRe matches the format produced by `dmesg --time-format=iso`:
 //
-//	[Mon Jan 15 10:00:00 2024] message
-//	[  +0.000000] message
-var dmesgPrefixRe = regexp.MustCompile(`^\[[^\]]*\]\s*`)
+//	YYYY-MM-DDTHH:MM:SS,uuuuuu±HHMM message
+//
+// The microsecond separator is a comma (locale-dependent), and the timezone is
+// the standard ±HHMM offset.
+var dmesgIsoLineRe = regexp.MustCompile(`^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}),\d+([+-]\d{4})\s+(.*)$`)
+
+const dmesgTimeLayout = "2006-01-02T15:04:05-0700"
 
 func collectDmesg(dumpDir, nodeRef string) []Event {
 	path := filepath.Join(dumpDir, "sys", "dmesg")
@@ -28,7 +31,7 @@ func collectDmesg(dumpDir, nodeRef string) []Event {
 	if err != nil {
 		return nil
 	}
-	mtime := info.ModTime().UTC().Format(time.RFC3339)
+	fallback := info.ModTime().UTC().Format(time.RFC3339)
 
 	var out []Event
 	scanner := bufio.NewScanner(f)
@@ -38,13 +41,12 @@ func collectDmesg(dumpDir, nodeRef string) []Event {
 		if line == "" {
 			continue
 		}
-		msg := dmesgPrefixRe.ReplaceAllString(line, "")
-		msg = strings.TrimSpace(msg)
+		ts, msg := parseDmesgLine(line, fallback)
 		if msg == "" {
 			continue
 		}
 		out = append(out, Event{
-			Timestamp:  mtime,
+			Timestamp:  ts,
 			Severity:   dmesgSeverity(msg),
 			Message:    msg,
 			Source:     "kernel",
@@ -53,6 +55,20 @@ func collectDmesg(dumpDir, nodeRef string) []Event {
 		})
 	}
 	return out
+}
+
+// parseDmesgLine returns (timestamp, message). If the line lacks a parseable
+// timestamp, fallback is used so the event still has a valid ISO string.
+func parseDmesgLine(line, fallback string) (string, string) {
+	m := dmesgIsoLineRe.FindStringSubmatch(line)
+	if m == nil {
+		return fallback, line
+	}
+	t, err := time.Parse(dmesgTimeLayout, m[1]+m[2])
+	if err != nil {
+		return fallback, strings.TrimSpace(m[3])
+	}
+	return t.UTC().Format(time.RFC3339), strings.TrimSpace(m[3])
 }
 
 func dmesgSeverity(msg string) string {

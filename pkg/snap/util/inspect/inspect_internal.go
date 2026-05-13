@@ -89,7 +89,9 @@ func (c *collector) collectSystemInfo(ctx context.Context) {
 	runAndCapture("swap", []string{"swapon"})
 	runAndCapture("uptime", []string{"uptime"})
 	runAndCapture("loaded_kernel_modules", []string{"lsmod"})
-	runAndCapture("dmesg", []string{"dmesg", "-H"})
+	// ISO timestamps make each line independently parseable by the events
+	// normalizer. -H's relative/short formats lose absolute time.
+	runAndCapture("dmesg", []string{"dmesg", "--time-format=iso"})
 
 	copyIfExists("/proc/mounts", filepath.Join(sysDir, "proc-mounts"))
 	copyIfExists("/etc/os-release", filepath.Join(sysDir, "etc-os-release"))
